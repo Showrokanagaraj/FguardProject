@@ -271,3 +271,140 @@ public ResponseEntity<String> exportCSV(@PathVariable Long id,
             .header("Content-Type", "text/csv")
             .body(csvData);
 }
+
+
+
+public String exportReportAsCSV(Long reportId, String user) throws IOException {
+
+    ComplianceReport report = complianceRepo.findById(reportId)
+            .orElseThrow(() -> new RuntimeException("Report not found"));
+
+    String filePath = "reports/report_" + reportId + ".csv";
+
+    FileWriter writer = new FileWriter(filePath);
+
+    writer.append("ReportId,FraudCases,AvgRiskScore,GeneratedDate\n");
+    writer.append(report.getReportId() + ","
+            + report.getFraudCases() + ","
+            + report.getAvgRiskScore() + ","
+            + report.getGeneratedDate());
+
+    writer.flush();
+    writer.close();
+
+    // Audit log
+    auditRepo.save(new AuditTrail(
+            "CSV saved at: " + filePath,
+            user,
+            LocalDateTime.now()
+    ));
+
+    return filePath;
+}
+
+
+package com.finguard.compliance.dto;
+
+import java.time.LocalDateTime;
+
+public class ComplianceReportDTO {
+
+    private Long reportId;
+    private int fraudCases;
+    private double avgRiskScore;
+    private LocalDateTime generatedDate;
+
+    public ComplianceReportDTO() {}
+
+    public ComplianceReportDTO(Long reportId, int fraudCases,
+                               double avgRiskScore,
+                               LocalDateTime generatedDate) {
+        this.reportId = reportId;
+        this.fraudCases = fraudCases;
+        this.avgRiskScore = avgRiskScore;
+        this.generatedDate = generatedDate;
+    }
+
+    // Getters & Setters
+    public Long getReportId() { return reportId; }
+    public void setReportId(Long reportId) { this.reportId = reportId; }
+
+    public int getFraudCases() { return fraudCases; }
+    public void setFraudCases(int fraudCases) { this.fraudCases = fraudCases; }
+
+    public double getAvgRiskScore() { return avgRiskScore; }
+    public void setAvgRiskScore(double avgRiskScore) { this.avgRiskScore = avgRiskScore; }
+
+    public LocalDateTime getGeneratedDate() { return generatedDate; }
+    public void setGeneratedDate(LocalDateTime generatedDate) { this.generatedDate = generatedDate; }
+}
+
+
+
+public ComplianceReportDTO generateReport(String user) {
+
+    int fraudCases = transactionRepo.countByStatus(TransactionStatus.FLAGGED);
+
+    double avgRisk = riskAlertRepo.findAll()
+            .stream()
+            .mapToDouble(alert -> alert.getRiskScore().doubleValue())
+            .average()
+            .orElse(0.0);
+
+    ComplianceReport report = new ComplianceReport(
+            fraudCases,
+            avgRisk,
+            LocalDateTime.now()
+    );
+
+    complianceRepo.save(report);
+
+    auditRepo.save(new AuditTrail(
+            "Generated Compliance Report",
+            user,
+            LocalDateTime.now()
+    ));
+
+    return convertToDTO(report);   // ✅ return DTO
+}
+
+
+
+private ComplianceReportDTO convertToDTO(ComplianceReport report) {
+    return new ComplianceReportDTO(
+            report.getReportId(),
+            report.getFraudCases(),
+            report.getAvgRiskScore(),
+            report.getGeneratedDate()
+    );
+}
+
+
+
+@RestController
+@RequestMapping("/api/compliance")
+public class ComplianceController {
+
+    private final ComplianceService service;
+
+    public ComplianceController(ComplianceService service) {
+        this.service = service;
+    }
+
+    @PostMapping("/generate")
+    public ComplianceReportDTO generate(@RequestParam String user) {
+        return service.generateReport(user);
+    }
+
+    @GetMapping
+    public List<ComplianceReportDTO> getAll() {
+        return service.getReports();
+    }
+}
+
+public List<ComplianceReportDTO> getReports() {
+    return complianceRepo.findAll()
+            .stream()
+            .map(this::convertToDTO)
+            .toList();
+}
