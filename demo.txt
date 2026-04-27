@@ -1,0 +1,231 @@
+package com.finguard.compliance.entity;
+
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+
+@Entity
+public class ComplianceReport {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long reportId;
+
+    private int fraudCases;
+    private double avgRiskScore;
+
+    private LocalDateTime generatedDate;
+
+    // Constructors
+    public ComplianceReport() {}
+
+    public ComplianceReport(int fraudCases, double avgRiskScore, LocalDateTime generatedDate) {
+        this.fraudCases = fraudCases;
+        this.avgRiskScore = avgRiskScore;
+        this.generatedDate = generatedDate;
+    }
+
+    // Getters & Setters
+    public Long getReportId() { return reportId; }
+    public int getFraudCases() { return fraudCases; }
+    public void setFraudCases(int fraudCases) { this.fraudCases = fraudCases; }
+
+    public double getAvgRiskScore() { return avgRiskScore; }
+    public void setAvgRiskScore(double avgRiskScore) { this.avgRiskScore = avgRiskScore; }
+
+    public LocalDateTime getGeneratedDate() { return generatedDate; }
+    public void setGeneratedDate(LocalDateTime generatedDate) { this.generatedDate = generatedDate; }
+}
+
+
+
+
+
+package com.finguard.compliance.entity;
+
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+
+@Entity
+public class AuditTrail {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String action;
+    private String performedBy;
+    private LocalDateTime timestamp;
+
+    // Constructors
+    public AuditTrail() {}
+
+    public AuditTrail(String action, String performedBy, LocalDateTime timestamp) {
+        this.action = action;
+        this.performedBy = performedBy;
+        this.timestamp = timestamp;
+    }
+
+    // Getters & Setters
+    public Long getId() { return id; }
+    public String getAction() { return action; }
+    public void setAction(String action) { this.action = action; }
+
+    public String getPerformedBy() { return performedBy; }
+    public void setPerformedBy(String performedBy) { this.performedBy = performedBy; }
+
+    public LocalDateTime getTimestamp() { return timestamp; }
+    public void setTimestamp(LocalDateTime timestamp) { this.timestamp = timestamp; }
+}
+
+
+
+
+package com.finguard.compliance.repository;
+
+import com.finguard.compliance.entity.ComplianceReport;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface ComplianceRepository extends JpaRepository<ComplianceReport, Long> {
+}
+
+
+
+
+package com.finguard.compliance.repository;
+
+import com.finguard.compliance.entity.AuditTrail;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface AuditTrailRepository extends JpaRepository<AuditTrail, Long> {
+}
+
+
+
+
+package com.finguard.compliance.service;
+
+import com.finguard.compliance.entity.*;
+import com.finguard.compliance.repository.*;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Service
+public class ComplianceService {
+
+    private final ComplianceRepository complianceRepo;
+    private final AuditTrailRepository auditRepo;
+
+    // Inject other modules (IMPORTANT)
+    private final RiskAlertRepository riskAlertRepo;
+    private final TransactionRepository transactionRepo;
+
+    public ComplianceService(ComplianceRepository complianceRepo,
+                             AuditTrailRepository auditRepo,
+                             RiskAlertRepository riskAlertRepo,
+                             TransactionRepository transactionRepo) {
+        this.complianceRepo = complianceRepo;
+        this.auditRepo = auditRepo;
+        this.riskAlertRepo = riskAlertRepo;
+        this.transactionRepo = transactionRepo;
+    }
+
+    // ✅ Generate AML Report
+    public ComplianceReport generateReport(String user) {
+
+        int fraudCases = transactionRepo.countByStatus("FLAGGED");
+
+        double avgRisk = riskAlertRepo.findAll()
+                .stream()
+                .mapToDouble(RiskAlert::getRiskScore)
+                .average()
+                .orElse(0.0);
+
+        ComplianceReport report = new ComplianceReport(
+                fraudCases,
+                avgRisk,
+                LocalDateTime.now()
+        );
+
+        complianceRepo.save(report);
+
+        // Audit Trail
+        auditRepo.save(new AuditTrail(
+                "Generated Compliance Report",
+                user,
+                LocalDateTime.now()
+        ));
+
+        return report;
+    }
+
+    // ✅ Get all reports
+    public List<ComplianceReport> getReports() {
+        return complianceRepo.findAll();
+    }
+
+    // ✅ Export report (TEXT format - no third party)
+    public String exportReport(Long reportId) {
+
+        ComplianceReport report = complianceRepo.findById(reportId)
+                .orElseThrow(() -> new RuntimeException("Report not found"));
+
+        return "REPORT ID: " + report.getReportId() + "\n" +
+               "Fraud Cases: " + report.getFraudCases() + "\n" +
+               "Avg Risk Score: " + report.getAvgRiskScore() + "\n" +
+               "Generated Date: " + report.getGeneratedDate();
+    }
+  public List<AuditTrail> getAuditLogs() {
+    return auditRepo.findAll();
+}
+
+
+}
+
+
+
+
+package com.finguard.compliance.controller;
+
+import com.finguard.compliance.entity.ComplianceReport;
+import com.finguard.compliance.service.ComplianceService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/compliance")
+public class ComplianceController {
+
+    private final ComplianceService service;
+
+    public ComplianceController(ComplianceService service) {
+        this.service = service;
+    }
+
+    // ✅ Generate report
+    @PostMapping("/generate")
+    public ComplianceReport generate(@RequestParam String user) {
+        return service.generateReport(user);
+    }
+
+    // ✅ Get reports
+    @GetMapping
+    public List<ComplianceReport> getAll() {
+        return service.getReports();
+    }
+
+    // ✅ Export report
+    @GetMapping("/export/{id}")
+    public String export(@PathVariable Long id) {
+        return service.exportReport(id);
+    }
+
+
+
+@GetMapping("/audit-logs")
+public List<AuditTrail> getAuditLogs() {
+    return service.getAuditLogs();
+}
+}
