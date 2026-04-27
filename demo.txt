@@ -229,3 +229,45 @@ public List<AuditTrail> getAuditLogs() {
     return service.getAuditLogs();
 }
 }
+
+
+
+
+
+
+
+public String exportReportAsCSV(Long reportId, String user) {
+
+    ComplianceReport report = complianceRepo.findById(reportId)
+            .orElseThrow(() -> new RuntimeException("Report not found"));
+
+    // ✅ Audit log
+    auditRepo.save(new AuditTrail(
+            "Downloaded CSV for Report ID: " + reportId,
+            user,
+            LocalDateTime.now()
+    ));
+
+    // CSV format
+    StringBuilder csv = new StringBuilder();
+    csv.append("ReportId,FraudCases,AvgRiskScore,GeneratedDate\n");
+    csv.append(report.getReportId()).append(",")
+       .append(report.getFraudCases()).append(",")
+       .append(report.getAvgRiskScore()).append(",")
+       .append(report.getGeneratedDate());
+
+    return csv.toString();
+}
+
+
+@GetMapping("/export/csv/{id}")
+public ResponseEntity<String> exportCSV(@PathVariable Long id,
+                                        @RequestParam String user) {
+
+    String csvData = service.exportReportAsCSV(id, user);
+
+    return ResponseEntity.ok()
+            .header("Content-Disposition", "attachment; filename=report.csv")
+            .header("Content-Type", "text/csv")
+            .body(csvData);
+}
