@@ -1,0 +1,197 @@
+@Service
+@Slf4j
+public class ComplianceService {
+
+    private final ComplianceRepository complianceRepo;
+    private final AuditTrailRepository auditRepo;
+    private final RiskAlertRepository riskAlertRepo;
+    private final TransactionMonitoringRepository transactionRepo;
+
+    public ComplianceService(ComplianceRepository complianceRepo,
+                             AuditTrailRepository auditRepo,
+                             RiskAlertRepository riskAlertRepo,
+                             TransactionMonitoringRepository transactionRepo) {
+        this.complianceRepo = complianceRepo;
+        this.auditRepo = auditRepo;
+        this.riskAlertRepo = riskAlertRepo;
+        this.transactionRepo = transactionRepo;
+    }
+
+    // 🔥 GENERATE REPORT PER CUSTOMER
+    public List<ComplianceReportDTO> generateReports(String user) {
+
+        log.info("Generating compliance reports...");
+
+        List<RiskAlert> alerts = riskAlertRepo.findAll();
+
+        Map<Long, List<RiskAlert>> grouped =
+                alerts.stream().collect(Collectors.groupingBy(a -> a.getTransaction().getCustomer().getCustomerId()));
+
+        List<ComplianceReportDTO> result = new ArrayList<>();
+
+        for (Map.Entry<Long, List<RiskAlert>> entry : grouped.entrySet()) {
+
+            Long customerId = entry.getKey();
+            List<RiskAlert> customerAlerts = entry.getValue();
+
+            int fraudCases = customerAlerts.size();
+
+            double riskScore = customerAlerts.stream()
+                    .mapToDouble(a -> a.getRiskScore().doubleValue())
+                    .sum();
+
+            complianceRepo.deleteByCustomerId(customerId);
+
+            ComplianceReport report = new ComplianceReport(
+                    customerId,
+                    fraudCases,
+                    riskScore,
+                    LocalDateTime.now()
+            );
+
+            complianceRepo.save(report);
+
+            result.add(mapToDTO(report));
+
+            log.info("Report generated for customer {}", customerId);
+        }
+
+        auditRepo.save(new AuditTrail(
+                "Generated customer-wise reports",
+                user,
+                LocalDateTime.now()
+        ));
+
+        return result;
+    }
+
+    // 🔥 GET ALL
+    public List<ComplianceReportDTO> getReports() {
+        return complianceRepo.findAll().stream().map(this::mapToDTO).toList();
+    }
+
+    // 🔥 GET BY CUSTOMER
+    public List<ComplianceReportDTO> getByCustomer(Long customerId) {
+        return complianceRepo.findByCustomerId(customerId)
+                .stream().map(this::mapToDTO).toList();
+    }
+
+    // 🔥 SUMMARY
+    public Map<String, Object> getSummary() {
+
+        List<ComplianceReport> reports = complianceRepo.findAll();
+
+        return Map.of(
+                "totalCustomers", reports.size(),
+                "totalFraudCases", reports.stream().mapToInt(ComplianceReport::getFraudCases).sum(),
+                "totalRiskScore", reports.stream().mapToDouble(ComplianceReport::getRiskScore).sum()
+        );
+    }
+
+    // 🔥 EXPORT CSV
+    public String exportReport(Long reportId, String user) throws IOException {
+
+        ComplianceReport report = complianceRepo.findById(reportId)
+                .orElseThrow(() -> new RuntimeException("Report not found"));
+
+        File dir = new File("reports");
+        if (!dir.exists()) dir.mkdirs();
+
+        String filePath = "reports/report_" + reportId + ".csv";
+
+        FileWriter writer = new FileWriter(filePath);
+
+        writer.append("ReportId,CustomerId,FraudCases,RiskScore,GeneratedDate\n");
+        writer.append(report.getReportId() + "," +
+                report.getCustomerId() + "," +
+                report.getFraudCases() + "," +
+                report.getRiskScore() + "," +
+                report.getGeneratedDate());
+
+        writer.close();
+
+        auditRepo.save(new AuditTrail("Exported CSV for report " + reportId, user, LocalDateTime.now()));
+
+        return filePath;
+    }
+
+    // 🔥 DELETE
+    public void deleteReport(Long customerId) {
+        complianceRepo.deleteByCustomerId(customerId);
+    }
+
+    // 🔥 AUDIT
+    public List<AuditTrail> getAuditLogs() {
+        return auditRepo.findAll();
+    }
+
+    private ComplianceReportDTO mapToDTO(ComplianceReport r) {
+        return new ComplianceReportDTO(
+                r.getReportId(),
+                r.getCustomerId(),
+                r.getFraudCases(),
+                r.getRiskScore(),
+                r.getGeneratedDate()
+        );
+    }
+}
+
+
+
+
+
+@RestController
+@RequestMapping("/api/compliance")
+@RequiredArgsConstructor
+@Slf4j
+public class ComplianceController {
+
+    private final ComplianceService service;
+
+    // 🔥 GENERATE
+    @PostMapping("/generate")
+    public List<ComplianceReportDTO> generate(@RequestParam String user) {
+        return service.generateReports(user);
+    }
+
+    // 🔥 GET ALL
+    @GetMapping("/allreports")
+    public List<ComplianceReportDTO> getAll() {
+        return service.getReports();
+    }
+
+    // 🔥 GET BY CUSTOMER
+    @GetMapping("/reports/{customerId}")
+    public List<ComplianceReportDTO> getByCustomer(@PathVariable Long customerId) {
+        return service.getByCustomer(customerId);
+    }
+
+    // 🔥 SUMMARY
+    @GetMapping("/summary")
+    public Map<String, Object> summary() {
+        return service.getSummary();
+    }
+
+    // 🔥 EXPORT
+    @GetMapping("/export/csv/{id}")
+    public ResponseEntity<String> exportCSV(@PathVariable Long id,
+                                            @RequestParam String user) throws IOException {
+
+        String file = service.exportReport(id, user);
+
+        return ResponseEntity.ok("CSV generated at: " + file);
+    }
+
+    // 🔥 DELETE
+    @DeleteMapping("/reports/{customerId}")
+    public String delete(@PathVariable Long customerId) {
+        service.deleteReport(customerId);
+        return "Deleted";
+    }
+
+    // 🔥 AUDIT
+    @GetMapping("/audit-logs")
+    public List<AuditTrail> getAuditLogs() {
+        return service.getAuditLogs();
+    }
+}
