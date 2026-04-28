@@ -1,0 +1,442 @@
+@Slf4j
+public List<ComplianceReportDTO> generateReports(ComplianceReportRequestDTO request) {
+
+    List<RiskAlert> alerts = riskAlertRepository.findAll();
+
+    // Optional filtering
+    if (request != null && request.getCustomerId() != null) {
+        alerts = alerts.stream()
+                .filter(a -> a.getCustomerId().equals(request.getCustomerId()))
+                .toList();
+    }
+
+    Map<Long, List<RiskAlert>> grouped =
+            alerts.stream().collect(Collectors.groupingBy(RiskAlert::getCustomerId));
+
+    List<ComplianceReportDTO> result = new ArrayList<>();
+
+    for (Map.Entry<Long, List<RiskAlert>> entry : grouped.entrySet()) {
+
+        Long customerId = entry.getKey();
+        List<RiskAlert> customerAlerts = entry.getValue();
+
+        int fraudCases = customerAlerts.size();
+
+        double riskScore = customerAlerts.stream()
+                .mapToDouble(RiskAlert::getRiskScore)
+                .sum();
+
+        reportRepository.deleteByCustomerId(customerId);
+
+        ComplianceReport report = new ComplianceReport(
+                null,
+                customerId,
+                fraudCases,
+                riskScore,
+                LocalDateTime.now()
+        );
+
+        reportRepository.save(report);
+
+        result.add(mapToDTO(report));
+
+        log.info("Report generated for customer {}", customerId);
+    }
+
+    return result;
+}
+
+
+
+
+public List<ComplianceReportDTO> getByCustomer(Long customerId) {
+
+    List<ComplianceReport> reports = reportRepository.findByCustomerId(customerId);
+
+    if (reports.isEmpty()) {
+        throw new RuntimeException("No reports found for customerId: " + customerId);
+    }
+
+    return reports.stream().map(this::mapToDTO).toList();
+}
+
+
+public List<ComplianceReportDTO> getByDate(LocalDateTime start, LocalDateTime end) {
+    return reportRepository.findByGeneratedDateBetween(start, end)
+            .stream()
+            .map(this::mapToDTO)
+            .toList();
+}
+
+
+
+public Map<String, Object> getSummary() {
+
+    List<ComplianceReport> reports = reportRepository.findAll();
+
+    int totalCustomers = reports.size();
+    int totalFraudCases = reports.stream()
+            .mapToInt(ComplianceReport::getFraudCases)
+            .sum();
+
+    double totalRiskScore = reports.stream()
+            .mapToDouble(ComplianceReport::getRiskScore)
+            .sum();
+
+    return Map.of(
+            "totalCustomers", totalCustomers,
+            "totalFraudCases", totalFraudCases,
+            "totalRiskScore", totalRiskScore
+    );
+}
+
+
+
+private ComplianceReportDTO mapToDTO(ComplianceReport r) {
+    return new ComplianceReportDTO(
+            r.getReportId(),
+            r.getCustomerId(),
+            r.getFraudCases(),
+            r.getRiskScore(),
+            r.getGeneratedDate()
+    );
+}
+
+
+package com.finguard.compliance.service;
+
+import com.finguard.compliance.dto.ComplianceReportDTO;
+import com.finguard.compliance.dto.ComplianceReportRequestDTO;
+import com.finguard.compliance.entity.ComplianceReport;
+import com.finguard.compliance.repository.ComplianceReportRepository;
+import com.finguard.risk.entity.RiskAlert;
+import com.finguard.risk.repository.RiskAlertRepository;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.data.domain.*;
+import org.springframework.stereotype.Service;
+
+import java.io.PrintWriter;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class ComplianceService {
+
+    private final ComplianceReportRepository reportRepository;
+    private final RiskAlertRepository riskAlertRepository;
+
+    // 🔥 GENERATE REPORTS
+    public List<ComplianceReportDTO> generateReports(ComplianceReportRequestDTO request) {
+
+        log.info("Starting report generation...");
+
+        try {
+            List<RiskAlert> alerts = riskAlertRepository.findAll();
+
+            // Optional filter
+            if (request != null && request.getCustomerId() != null) {
+                log.info("Filtering for customerId={}", request.getCustomerId());
+
+                alerts = alerts.stream()
+                        .filter(a -> a.getCustomerId().equals(request.getCustomerId()))
+                        .toList();
+            }
+
+            Map<Long, List<RiskAlert>> grouped =
+                    alerts.stream().collect(Collectors.groupingBy(RiskAlert::getCustomerId));
+
+            List<ComplianceReportDTO> result = new ArrayList<>();
+
+            for (Map.Entry<Long, List<RiskAlert>> entry : grouped.entrySet()) {
+
+                Long customerId = entry.getKey();
+                List<RiskAlert> customerAlerts = entry.getValue();
+
+                log.info("Generating report for customerId={}", customerId);
+
+                int fraudCases = customerAlerts.size();
+
+                double riskScore = customerAlerts.stream()
+                        .mapToDouble(RiskAlert::getRiskScore)
+                        .sum();
+
+                // Refresh existing report
+                reportRepository.deleteByCustomerId(customerId);
+
+                ComplianceReport report = new ComplianceReport(
+                        null,
+                        customerId,
+                        fraudCases,
+                        riskScore,
+                        LocalDateTime.now()
+                );
+
+                reportRepository.save(report);
+
+                result.add(mapToDTO(report));
+            }
+
+            log.info("Report generation completed. Total customers={}", result.size());
+
+            return result;
+
+        } catch (Exception e) {
+            log.error("Error generating reports", e);
+            throw new RuntimeException("Failed to generate reports");
+        }
+    }
+
+    // 🔥 GET ALL REPORTS
+    public List<ComplianceReportDTO> getAllReports() {
+
+        log.info("Fetching all compliance reports");
+
+        return reportRepository.findAll()
+                .stream()
+                .map(this::mapToDTO)
+                .toList();
+    }
+
+    // 🔥 GET BY CUSTOMER
+    public List<ComplianceReportDTO> getByCustomer(Long customerId) {
+
+        log.info("Fetching reports for customerId={}", customerId);
+
+        List<ComplianceReport> reports = reportRepository.findByCustomerId(customerId);
+
+        if (reports.isEmpty()) {
+            log.warn("No reports found for customerId={}", customerId);
+            throw new RuntimeException("No reports found for customerId: " + customerId);
+        }
+
+        return reports.stream().map(this::mapToDTO).toList();
+    }
+
+    // 🔥 DATE FILTER
+    public List<ComplianceReportDTO> getByDate(LocalDateTime start, LocalDateTime end) {
+
+        log.info("Fetching reports between {} and {}", start, end);
+
+        return reportRepository.findByGeneratedDateBetween(start, end)
+                .stream()
+                .map(this::mapToDTO)
+                .toList();
+    }
+
+    // 🔥 SUMMARY
+    public Map<String, Object> getSummary() {
+
+        log.info("Fetching compliance summary");
+
+        List<ComplianceReport> reports = reportRepository.findAll();
+
+        int totalCustomers = reports.size();
+
+        int totalFraudCases = reports.stream()
+                .mapToInt(ComplianceReport::getFraudCases)
+                .sum();
+
+        double totalRiskScore = reports.stream()
+                .mapToDouble(ComplianceReport::getRiskScore)
+                .sum();
+
+        return Map.of(
+                "totalCustomers", totalCustomers,
+                "totalFraudCases", totalFraudCases,
+                "totalRiskScore", totalRiskScore
+        );
+    }
+
+    // 🔥 EXPORT CSV
+    public void exportToCSV(PrintWriter writer) {
+
+        log.info("Exporting reports to CSV");
+
+        List<ComplianceReport> reports = reportRepository.findAll();
+
+        writer.println("ReportId,CustomerId,FraudCases,RiskScore,GeneratedDate");
+
+        for (ComplianceReport r : reports) {
+            writer.println(
+                    r.getReportId() + "," +
+                    r.getCustomerId() + "," +
+                    r.getFraudCases() + "," +
+                    r.getRiskScore() + "," +
+                    r.getGeneratedDate()
+            );
+        }
+
+        log.info("CSV export completed. Records={}", reports.size());
+    }
+
+    // 🔥 DELETE REPORT
+    public void deleteByCustomer(Long customerId) {
+
+        log.info("Deleting report for customerId={}", customerId);
+
+        reportRepository.deleteByCustomerId(customerId);
+    }
+
+    // 🔥 PAGINATION (OPTIONAL)
+    public Page<ComplianceReportDTO> getPaginatedReports(int page, int size) {
+
+        Pageable pageable = PageRequest.of(page, size);
+
+        return reportRepository.findAll(pageable)
+                .map(this::mapToDTO);
+    }
+
+    // 🔥 MAPPER
+    private ComplianceReportDTO mapToDTO(ComplianceReport r) {
+        return new ComplianceReportDTO(
+                r.getReportId(),
+                r.getCustomerId(),
+                r.getFraudCases(),
+                r.getRiskScore(),
+                r.getGeneratedDate()
+        );
+    }
+}
+
+
+package com.finguard.compliance.controller;
+
+import com.finguard.compliance.dto.*;
+import com.finguard.compliance.service.ComplianceService;
+
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.data.domain.Page;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/compliance")
+@RequiredArgsConstructor
+@Slf4j
+public class ComplianceController {
+
+    private final ComplianceService complianceService;
+
+    // 🔥 1. GENERATE REPORTS (POST)
+    @PostMapping("/generate")
+    public ResponseEntity<ApiResponse<List<ComplianceReportDTO>>> generate(
+            @RequestBody(required = false) ComplianceReportRequestDTO request) {
+
+        log.info("API called: Generate reports");
+
+        return ResponseEntity.ok(
+                new ApiResponse<>("Reports generated successfully",
+                        complianceService.generateReports(request))
+        );
+    }
+
+    // 🔥 2. GET ALL REPORTS
+    @GetMapping("/reports/all")
+    public ResponseEntity<ApiResponse<List<ComplianceReportDTO>>> getAll() {
+
+        log.info("API called: Get all reports");
+
+        return ResponseEntity.ok(
+                new ApiResponse<>("All reports fetched",
+                        complianceService.getAllReports())
+        );
+    }
+
+    // 🔥 3. GET BY CUSTOMER
+    @GetMapping("/reports/{customerId}")
+    public ResponseEntity<ApiResponse<List<ComplianceReportDTO>>> getByCustomer(
+            @PathVariable Long customerId) {
+
+        log.info("API called: Get reports for customerId={}", customerId);
+
+        return ResponseEntity.ok(
+                new ApiResponse<>("Customer reports fetched",
+                        complianceService.getByCustomer(customerId))
+        );
+    }
+
+    // 🔥 4. DATE FILTER (Swagger/Postman friendly)
+    @GetMapping("/reports")
+    public ResponseEntity<ApiResponse<List<ComplianceReportDTO>>> getByDate(
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+            LocalDateTime start,
+
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+            LocalDateTime end) {
+
+        log.info("API called: Get reports between {} and {}", start, end);
+
+        return ResponseEntity.ok(
+                new ApiResponse<>("Reports by date",
+                        complianceService.getByDate(start, end))
+        );
+    }
+
+    // 🔥 5. SUMMARY API
+    @GetMapping("/summary")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> summary() {
+
+        log.info("API called: Get summary");
+
+        return ResponseEntity.ok(
+                new ApiResponse<>("Summary fetched",
+                        complianceService.getSummary())
+        );
+    }
+
+    // 🔥 6. EXPORT CSV
+    @GetMapping("/export/csv")
+    public void exportCSV(HttpServletResponse response) throws IOException {
+
+        log.info("API called: Export CSV");
+
+        response.setContentType("text/csv");
+        response.setHeader("Content-Disposition", "attachment; filename=reports.csv");
+
+        complianceService.exportToCSV(response.getWriter());
+    }
+
+    // 🔥 7. DELETE REPORT
+    @DeleteMapping("/reports/{customerId}")
+    public ResponseEntity<ApiResponse<String>> deleteReport(
+            @PathVariable Long customerId) {
+
+        log.info("API called: Delete report for customerId={}", customerId);
+
+        complianceService.deleteByCustomer(customerId);
+
+        return ResponseEntity.ok(
+                new ApiResponse<>("Report deleted", "Success")
+        );
+    }
+
+    // 🔥 8. PAGINATION (OPTIONAL)
+    @GetMapping("/reports/page")
+    public ResponseEntity<Page<ComplianceReportDTO>> getPaginated(
+            @RequestParam int page,
+            @RequestParam int size) {
+
+        log.info("API called: Get paginated reports page={} size={}", page, size);
+
+        return ResponseEntity.ok(
+                complianceService.getPaginatedReports(page, size)
+        );
+    }
+}
