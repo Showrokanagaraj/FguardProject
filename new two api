@@ -1,0 +1,125 @@
+@Transactional
+public ComplianceReportDTO generateReportByCustomer(Long customerId, String user) {
+
+    log.info("Generating report for customerId={}", customerId);
+
+    List<RiskAlert> alerts = riskAlertRepo.findAll().stream()
+            .filter(a -> a.getTransaction().getCustomer().getCustomerId().equals(customerId))
+            .toList();
+
+    if (alerts.isEmpty()) {
+        log.warn("No alerts found for customerId={}", customerId);
+        throw new ResourceNotFoundException("No alerts found for customerId: " + customerId);
+    }
+
+    int fraudCases = alerts.size();
+
+    double riskScore = alerts.stream()
+            .mapToDouble(a -> a.getRiskScore().doubleValue())
+            .sum();
+
+    complianceRepo.deleteByCustomerId(customerId);
+
+    ComplianceReport report = new ComplianceReport(
+            customerId,
+            fraudCases,
+            riskScore,
+            LocalDateTime.now()
+    );
+
+    complianceRepo.save(report);
+
+    auditRepo.save(new AuditTrail(
+            "Generated report for customer " + customerId,
+            user,
+            LocalDateTime.now()
+    ));
+
+    log.info("Report generated successfully for customerId={}", customerId);
+
+    return mapToDTO(report);
+}
+
+
+
+
+
+
+public List<ComplianceReportDTO> filterReports(
+        LocalDate startDate,
+        LocalDate endDate,
+        Integer month,
+        Integer year) {
+
+    log.info("Filtering reports startDate={}, endDate={}, month={}, year={}",
+            startDate, endDate, month, year);
+
+    List<ComplianceReport> reports = complianceRepo.findAll();
+
+    if (reports.isEmpty()) {
+        throw new ResourceNotFoundException("No reports available");
+    }
+
+    Stream<ComplianceReport> stream = reports.stream();
+
+    if (startDate != null && endDate != null) {
+        stream = stream.filter(r ->
+                r.getGeneratedDate().toLocalDate().isAfter(startDate.minusDays(1)) &&
+                r.getGeneratedDate().toLocalDate().isBefore(endDate.plusDays(1))
+        );
+    }
+
+    if (month != null) {
+        stream = stream.filter(r ->
+                r.getGeneratedDate().getMonthValue() == month
+        );
+    }
+
+    if (year != null) {
+        stream = stream.filter(r ->
+                r.getGeneratedDate().getYear() == year
+        );
+    }
+
+    List<ComplianceReportDTO> result = stream.map(this::mapToDTO).toList();
+
+    if (result.isEmpty()) {
+        throw new ResourceNotFoundException("No reports found for given filters");
+    }
+
+    return result;
+}
+
+
+
+
+
+@PostMapping("/generate/{customerId}")
+public ComplianceReportDTO generateForCustomer(
+        @PathVariable Long customerId,
+        @RequestParam String user) {
+
+    log.info("API: Generate report for customerId={}", customerId);
+
+    return service.generateReportByCustomer(customerId, user);
+}
+
+
+
+@GetMapping("/reports/filter")
+public List<ComplianceReportDTO> filterReports(
+
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+        LocalDate startDate,
+
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+        LocalDate endDate,
+
+        @RequestParam(required = false) Integer month,
+
+        @RequestParam(required = false) Integer year) {
+
+    log.info("API: Filter reports");
+
+    return service.filterReports(startDate, endDate, month, year);
+}
