@@ -1,0 +1,126 @@
+package com.test;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.exception.InvalidBikeException;
+import com.model.Bike;
+import com.util.BikeUtil;
+
+public class BikeTest {
+
+    private static BikeUtil buObj;
+
+    @BeforeAll
+    public static void setUp() throws Exception {
+
+        buObj = new BikeUtil();
+
+        SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy");
+
+        List<Bike> list = new ArrayList<>();
+
+        list.add(new Bike("B101", "Honda", "Red", "Petrol",
+                sdf.parse("10/01/2020"), 90000));
+
+        list.add(new Bike("B102", "Yamaha", "Black", "Petrol",
+                sdf.parse("12/02/2021"), 95000));
+
+        list.add(new Bike("B103", "Suzuki", "Blue", "Petrol",
+                sdf.parse("15/03/2022"), 90000));
+
+        list.add(new Bike("B104", "Royal Enfield", "Grey", "Diesel",
+                sdf.parse("20/04/2023"), 120000));
+
+        buObj.setBikeList(list);
+    }
+
+    // Test Yamaha
+    @Test
+    public void test11ValidateBrandNameWhenYamaha() throws Exception {
+
+        assertTrue(buObj.validateBrandName("Yamaha"));
+    }
+
+    // Test Honda
+    @Test
+    public void test12ValidateBrandNameWhenHonda() throws Exception {
+
+        assertTrue(buObj.validateBrandName("Honda"));
+    }
+
+    // Test Suzuki
+    @Test
+    public void test13ValidateBrandNameWhenSuzuki() throws Exception {
+
+        assertTrue(buObj.validateBrandName("Suzuki"));
+    }
+
+    // Test Royal Enfield
+    @Test
+    public void test14ValidateBrandNameWhenRoyalEnfield() throws Exception {
+
+        assertTrue(buObj.validateBrandName("Royal Enfield"));
+    }
+
+    // Invalid Brand Test
+    @Test
+    public void test15ValidateBrandNameWhenInvalid() {
+
+        assertThrows(InvalidBikeException.class, () -> {
+            buObj.validateBrandName("BMW");
+        });
+    }
+
+    // View Bike Details By Brand Name
+    @Test
+    public void test16ViewBikeDetailsByBrandName() throws Exception {
+
+        List<Bike> result = buObj.viewBikeDetailsByBrandName("Honda");
+
+        assertEquals(1, result.size());
+        assertEquals("Honda", result.get(0).getBrandName());
+    }
+
+    // Total Count By Price Wise
+    @Test
+    public void test17TotalCountOfBikesByPriceWise() throws Exception {
+
+        Map<Double, Integer> map = buObj.totalCountOfBikesByPriceWise();
+
+        assertEquals(2, map.get(90000.0));
+        assertEquals(1, map.get(95000.0));
+        assertEquals(1, map.get(120000.0));
+    }
+
+    // Empty List Test for ViewBikeDetails
+    @Test
+    public void test18ViewBikeDetailsByBrandNameForEmptyList() {
+
+        BikeUtil obj = new BikeUtil();
+
+        assertThrows(InvalidBikeException.class, () -> {
+            obj.viewBikeDetailsByBrandName("Honda");
+        });
+    }
+
+    // Empty List Test for TotalCountOfBikes
+    @Test
+    public void test19TotalCountOfBikesByPriceWiseForEmptyList() {
+
+        BikeUtil obj = new BikeUtil();
+
+        assertThrows(InvalidBikeException.class, () -> {
+            obj.totalCountOfBikesByPriceWise();
+        });
+    }
+}
